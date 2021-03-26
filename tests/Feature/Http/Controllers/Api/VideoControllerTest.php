@@ -2,10 +2,17 @@
 
 namespace Tests\Feature\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\VideoController;
+use App\Models\Category;
+use App\Models\Genre;
 use App\Models\Video;
+use Exception;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Foundation\Testing\TestResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Lang;
+use Mockery;
+use Tests\Exceptions\TestException;
 use Tests\TestCase;
 
 class VideoControllerTest extends TestCase
@@ -44,6 +51,8 @@ class VideoControllerTest extends TestCase
             'opened' => 10,
             'rating' => '6',
             'duration' => 's',
+            'categories_id' => 123,
+            'genres_id' => 'a',
         ];
 
         $response = $this->json('POST', route('videos.store'), $requestBody);
@@ -53,6 +62,7 @@ class VideoControllerTest extends TestCase
         $this->assertInvalidationInteger($response);
         $this->assertInvalidationYear($response);
         $this->assertInvalidationRating($response);
+        $this->assertInvalidationRelationship($response);
 
         $video = factory(Video::class)->create();
         $response = $this->json('PUT', route('videos.update',  ['video' => $video->id]), []);
@@ -68,6 +78,7 @@ class VideoControllerTest extends TestCase
         $this->assertInvalidationInteger($response);
         $this->assertInvalidationYear($response);
         $this->assertInvalidationRating($response);
+        $this->assertInvalidationRelationship($response);
     }
 
     protected function assertInvalidationRequired(TestResponse $response)
@@ -77,7 +88,9 @@ class VideoControllerTest extends TestCase
             'description',
             'year_launched',
             'rating',
-            'duration'
+            'duration',
+            'categories_id',
+            'genres_id',
         ];
 
         foreach ($requiredFields as $key => $field) {
@@ -142,8 +155,25 @@ class VideoControllerTest extends TestCase
             ]);
     }
 
+    protected function assertInvalidationRelationship(TestResponse $response)
+    {
+        $response
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['categories_id'])
+            ->assertJsonValidationErrors(['genres_id'])
+            ->assertJsonFragment([
+                Lang::get('validation.array', ['attribute' => 'categories id'])
+            ])
+            ->assertJsonFragment([
+                Lang::get('validation.array', ['attribute' => 'genres id'])
+            ]);
+    }
+
     public function testStore()
     {
+        $category = factory(Category::class)->create();
+        $genre = factory(Genre::class)->create();
+
         $requestBody = [
             'title' => 'TestTitle',
             'description' => 'TestDescription',
@@ -151,6 +181,8 @@ class VideoControllerTest extends TestCase
             'opened' => 1,
             'rating' => '12',
             'duration' => 8,
+            'categories_id' => [$category->id],
+            'genres_id' => [$genre->id]
         ];
 
         $response = $this->json('POST', route('videos.store'), $requestBody);
@@ -169,8 +201,89 @@ class VideoControllerTest extends TestCase
         $this->assertEquals(8, $response->json('duration'));
     }
 
+    public function testRoolbackStore()
+    {
+        $controller = Mockery::mock(VideoController::class)
+            ->makePartial()
+            ->shouldAllowMockingProtectedMethods();
+
+        $controller->shouldReceive('validate')
+            ->withAnyArgs()
+            ->andReturn([
+                'title' => 'TestTitle',
+                'description' => 'TestDescription',
+                'year_launched' => 2021,
+                'opened' => 1,
+                'rating' => '12',
+                'duration' => 8,
+                'categories_id' => ['1'],
+                'genres_id' => ['1']
+            ]);
+
+        $controller->shouldReceive('rulesStore')
+            ->withAnyArgs()
+            ->andReturn([]);
+
+        $controller->shouldReceive('handleRelations')
+            ->once()
+            ->andThrow(new TestException());
+
+        $request = Mockery::mock(Request::class);
+
+        try {
+            $controller->store($request);
+        } catch (TestException $exception) {
+            $this->assertCount(0, Video::all());
+        }
+    }
+
+    public function testRoolbackUpdate()
+    {
+        $video = factory(Video::class)->create([
+            'title' => 'TestTitle',
+            'description' => 'TestDescription',
+            'year_launched' => 2021,
+            'opened' => 1,
+            'rating' => '12',
+            'duration' => 8
+        ]);
+
+        $controller = Mockery::mock(VideoController::class)
+            ->makePartial()
+            ->shouldAllowMockingProtectedMethods();
+
+        $controller->shouldReceive('validate')
+            ->withAnyArgs()
+            ->andReturn($video->get()->toArray());
+
+        $controller->shouldReceive('rulesStore')
+            ->withAnyArgs()
+            ->andReturn([]);
+
+        $controller->shouldReceive('findOrFail')
+            ->withAnyArgs()
+            ->andReturn($video);
+
+        $controller->shouldReceive('handleRelations')
+            ->once()
+            ->andThrow(new TestException());
+
+        $request = Mockery::mock(Request::class);
+
+        try {
+            $controller->update($request, $video->id);
+        } catch (TestException $exception) {
+            $video = Video::find($video->id);
+            $this->assertEquals($video->created_at, $video->updated_at);
+            $this->assertCount(1, Video::all());
+        }
+    }
+
     public function testUpdate()
     {
+        $category = factory(Category::class)->create();
+        $genre = factory(Genre::class)->create();
+
         $video = factory(Video::class)->create([
             'title' => 'TestTitle',
             'description' => 'TestDescription',
@@ -189,6 +302,8 @@ class VideoControllerTest extends TestCase
                 'year_launched' => 2020,
                 'rating' => 'L',
                 'duration' => 1,
+                'categories_id' => [$category->id],
+                'genres_id' => [$genre->id]
             ]
         );
 
