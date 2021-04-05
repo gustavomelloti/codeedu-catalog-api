@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use Exception;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 
 class Video extends Model
 {
@@ -30,6 +32,41 @@ class Video extends Model
     ];
 
     public $incrementing = false;
+
+    public static function create(array $attributes = [])
+    {
+        try {
+            DB::beginTransaction();
+            $video = static::query()->create($attributes);
+            // upload dos arquivos
+            DB::commit();
+            return $video;
+        } catch (Exception $e) {
+            if (isset($video)) {
+                // Excluir os arquivos
+            }
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function update(array $attributes = [], array $options = [])
+    {
+        try {
+            DB::beginTransaction();
+            $saved = parent::update($attributes, $options);
+            if ($saved) {
+                // upload dos arquivos
+                // Excluir os atigos
+            }
+            DB::commit();
+            return $saved;
+        } catch (Exception $e) {
+            // Excluir os arquivos
+            DB::rollBack();
+            throw $e;
+        }
+    }
 
     public function categories()
     {
